@@ -12,15 +12,15 @@ Certificate Request.
 
 === Initial Setup
 
-[source, python]
+[source, bash]
 ----
-$ pipenv sync
+pipenv sync
 ----
 
 === Invoke
-[source, python]
+[source, bash]
 ----
-$ pipenv run yubihsm-ssh-tool
+pipenv run yubihsm-ssh-tool
 ----
 
 === Example
