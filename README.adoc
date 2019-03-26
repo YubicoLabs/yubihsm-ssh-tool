@@ -1,0 +1,169 @@
+== YubiHSM SSH Tool
+
+A tool for creating requests/templates for SSH Certificates with
+YubiHSM 2.
+
+This tool helps simplifying the process of creating OpenSSH
+Certificates using the
+link:https://developers.yubico.com/YubiHSM2/[YubiHSM 2].
+
+It has two main functionalities, creating an SSH Template and an SSH
+Certificate Request.
+
+=== Initial Setup
+
+[source, python]
+----
+$ pipenv sync
+----
+
+=== Invoke
+[source, python]
+----
+$ pipenv run yubihsm-ssh-tool
+----
+
+=== Example
+
+This is a quick example about how to generate an SSH Template, load it
+onto a YubiHSM, generate an SSH Certificate Request and get that
+signed by a YubiHSM to form an SSH Certificates. More information
+about this topic can be found in
+link:https://developers.yubico.com/YubiHSM2/Usage_Guides/OpenSSH_certificates.html[this]
+guide.
+
+For this example to work, `yubihsm-shell` (with either a
+`yubihsm-connector` or direct USB connection), a YubiHSM device,
+`OpenSSH` and `OpenSSL` must be available.
+
+First we want to generate the SSH CA key-pair. This is the key that
+will be used to sign the SSH Certificate at the end. In this example
+the key will be generated on a computer and imported onto the YubiHSM,
+but it could be generated directly in the device.
+
+[source, bash]
+----
+openssl genrsa -out ca.pem
+----
+
+Then we extract the public key and save it to a file.
+
+[source, bash]
+----
+openssl rsa -pubout -in ca.pem -out ca_pub.pem
+----
+
+Optionally, the public key can also be converted to the OpenSSH format
+by doing
+
+[source, bash]
+----
+ssh-keygen -i -f ca_pub.pem -m PKCS8 >ca.pub
+----
+
+We can now import this private key into the YubiHSM with Object ID
+`10` by running
+
+[source, bash]
+----
+yubihsm-shell -a put-asymmetric-key -p password -i 10 -l "SSH_CA_Key" -c "sign-ssh-certificate" --in ca.pem
+----
+
+The next step is to create an SSH Template. This is a collection of
+constraints that limit how the SSH CA key can be used, and whether or
+not a specific SSH Certificate Request should be signed.
+
+Since an SSH Certificate has a fixed validity, signed timestamps are
+used to provide the YubiHSM with the notion of `now`. This means that
+a timestamp key-pair is necessary. We will create it in the same way
+that we did before.
+
+[source, bash]
+----
+openssl genrsa -out timestamp.pem
+----
+
+[source, bash]
+----
+openssl rsa -pubout -in timestamp.pem -out timestamp_pub.pem
+----
+
+We can now use `yubihsm-ssh-tool` to generate the SSH Template. This
+template will only allow to use the Asymmetric Key with ID `10` to
+sign requests, and it will only allow validity intervals that fall in
+the range of `now ± 10h` (`36,000s = 10h`) where `now` it the current
+time that will be sent along with the SSH Certificate Request. It will
+also prevent certificates to be issued to the user `root`. The
+template will containt the timestamp public key to verify future
+timestamp signatures. The command for this is:
+
+[source, bash]
+----
+pipenv run yubihsm-ssh-tool templ -T timestamp_pub.pem -k 10 -b 36000 -a 36000 -p root
+----
+
+This will result in a file called `templ.dat` that can be imported on
+the YubiHSM with Object ID `20`.
+
+[source, bash]
+----
+yubihsm-shell -a put-template -p password -i 20 -l "SSH_Template" -A template-ssh --in templ.dat
+----
+
+Next we will create an SSH Certificate Request. First of all we need
+an OpenSSH key-pair, this is the key-pair of the user and what we will
+create a certificate for. This key can already exist somewhere, for
+example it can be stored on a YubiKey. To make this example easier to
+follow, we will generate a new pair of soft keys with the following
+command:
+
+[source, bash]
+----
+ssh-keygen -t rsa -N "" -f ./id_rsa
+----
+
+Once we have the key-pair, we can use `yubihsm-ssh-tool` to generate a
+request for a certificate issued to the user `username` with a
+validity period of `± 5h` from the current time. The timestamp in the
+request will be signed using the timestamp private key generated in
+one of the previous steps and it will be saved to a file called
+`req.dat`.
+
+[source, bash]
+----
+pipenv run yubihsm-ssh-tool req -s ca_pub.pem -t timestamp.pem -I user-identity -n username -V -5h:+5h id_rsa.pub
+----
+
+At this point it is possible to send the request to the YubiHSM to get
+it signed and produce an SSH Certificate in the file
+`id_rsa-cert.pub`.
+
+[source, bash]
+----
+yubihsm-shell -a sign-ssh-certificate -p password -i 10 --template-id 20 -A rsa-pkcs1-sha256 --in req.dat --out id_rsa-cert.pub
+----
+
+The certificate can then be printed in human-readable form by running
+
+[source, bash]
+----
+ssh-keygen -Lf id_rsa-cert.pub
+----
+
+=== License
+
+....
+ Copyright 2015-2018 Yubico AB
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+....

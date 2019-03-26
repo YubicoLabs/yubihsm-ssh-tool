@@ -1,0 +1,9 @@
+*.pyc
+*.egg
+*.egg-info
+build/
+.eggs/
+*.pub
+*.pem
+*.dat
+id_rsa*
